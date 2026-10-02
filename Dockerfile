@@ -16,12 +16,13 @@ RUN apt-get update \
 
 # Olah still calls Starlette's pre-1.0 TemplateResponse(name, context) API,
 # which Starlette 1.x removed (the index page 500s), so stay on 0.x.
-RUN python -m venv /opt/olah
 # hadolint ignore=DL3013
-RUN /opt/olah/bin/pip install "olah${OLAH_VERSION:+==${OLAH_VERSION}}" "starlette<1"
+RUN python -m venv /opt/olah \
+    && /opt/olah/bin/pip install "olah${OLAH_VERSION:+==${OLAH_VERSION}}" "starlette<1"
 
 # The PyPI package omits olah/static (the web UI templates), so the index page
 # fails with "template not found". Fetch them from the matching GitHub tag.
+# hadolint ignore=DL3059
 RUN /opt/olah/bin/python - <<'PY'
 import io, tarfile, urllib.request
 from importlib.metadata import version
@@ -65,12 +66,12 @@ RUN useradd --uid 1000 --create-home --shell /usr/sbin/nologin olah \
     && mkdir /data \
     && chown olah:olah /data
 
-USER olah
+USER 1000:1000
 WORKDIR /data
 VOLUME /data
 EXPOSE 8090
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD nc -z localhost 8090 || exit 1
+    CMD ["nc", "-z", "localhost", "8090"]
 
 CMD ["olah-cli", "--host", "0.0.0.0", "--port", "8090", "--repos-path", "/data/repos", "--log-path", "/data/logs"]
