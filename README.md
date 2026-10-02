@@ -9,6 +9,10 @@
 Docker image for [Olah](https://github.com/vtuber-plan/olah), a self-hosted Hugging Face mirror/proxy.
 A GitHub Action checks PyPI daily for a new Olah release and publishes a new image when one appears.
 
+## AI disclosure
+
+This project was written with AI assistance (Claude) under human supervision.
+
 ## Usage
 
 ```bash
