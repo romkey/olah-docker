@@ -1,0 +1,158 @@
+name: Release
+
+on:
+  schedule:
+    - cron: "17 5 * * *" # daily: check PyPI for a new Olah version
+    - cron: "43 4 * * 1" # weekly: rebuild to pick up Debian/Python security fixes
+  push:
+    branches: [main]
+    paths:
+      - Dockerfile
+      - scripts/**
+      - .github/workflows/release.yml
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Rebuild and publish even if the version already exists
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      minor: ${{ steps.version.outputs.minor }}
+      build: ${{ steps.decide.outputs.build }}
+    steps:
+      - name: Get latest Olah version from PyPI
+        id: version
+        run: |
+          version=$(curl -fsSL https://pypi.org/pypi/olah/json | jq -r .info.version)
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Unexpected Olah version: $version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "minor=${version%.*}" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Decide whether to build
+        id: decide
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          EVENT: ${{ github.event_name }}
+          SCHEDULE: ${{ github.event.schedule }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          build=false
+          if ! docker buildx imagetools inspect "$image:$VERSION" >/dev/null 2>&1; then
+            build=true; reason="new Olah version $VERSION"
+          elif [[ "$EVENT" == push ]]; then
+            build=true; reason="repo change"
+          elif [[ "$EVENT" == workflow_dispatch && "$FORCE" == true ]]; then
+            build=true; reason="forced"
+          elif [[ "$SCHEDULE" == "43 4 * * 1" ]]; then
+            build=true; reason="weekly security rebuild"
+          fi
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+          echo "Build: $build (${reason:-$VERSION already published})"
+
+  build:
+    needs: check
+    if: needs.check.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=${{ needs.check.outputs.version }}
+            type=raw,value=${{ needs.check.outputs.minor }}
+            type=raw,value=latest
+      - name: Build image for testing (amd64)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          provenance: false
+          build-args: OLAH_VERSION=${{ needs.check.outputs.version }}
+          tags: olah-docker:test
+          cache-from: type=gha,scope=release
+          cache-to: type=gha,scope=release,mode=max
+      - name: Smoke test
+        run: scripts/smoke-test.sh olah-docker:test "${{ needs.check.outputs.version }}"
+      - name: Trivy scan (report)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: olah-docker:test
+          format: sarif
+          output: trivy.sarif
+          exit-code: "0"
+      - name: Upload scan results
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy.sarif
+          category: trivy
+      - name: Trivy scan (gate on fixable CRITICAL)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: olah-docker:test
+          format: table
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Build and push (amd64 + arm64)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: mode=max
+          sbom: true
+          build-args: OLAH_VERSION=${{ needs.check.outputs.version }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=release
+          cache-to: type=gha,scope=release,mode=max
+
+  # GitHub disables scheduled workflows after 60 days without repo activity.
+  # Re-enabling the workflow resets that timer.
+  keepalive:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Re-enable this workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh workflow enable release.yml
