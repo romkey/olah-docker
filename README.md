@@ -34,6 +34,28 @@ Images are multi-arch (`linux/amd64`, `linux/arm64`) and ship with SBOM and prov
 docker run --rm ghcr.io/romkey/olah-docker:latest dig huggingface.co
 ```
 
+## Docker Compose
+
+[`compose.example.yaml`](compose.example.yaml) is a ready-to-use starting point:
+
+```bash
+docker compose -f compose.example.yaml up -d
+```
+
+Olah is configured with command-line flags (or a `--config` file), so the example overrides `command`. Things to adjust:
+
+- `--mirror-netloc` / `--mirror-lfs-netloc`: set these to the `host:port` your clients use to reach Olah (e.g. `olah.example.com:8090`), and `--mirror-scheme` to `http` or `https`.
+- `--cache-size-limit`: uncomment to cap the cache size (e.g. `100GB`).
+- `image`: pin a version tag such as `0.5.1` instead of `latest` for reproducible deploys.
+
+Point Hugging Face clients at it with `HF_ENDPOINT`:
+
+```bash
+HF_ENDPOINT=http://localhost:8090 huggingface-cli download gpt2
+```
+
+The cache lives in the `olah-data` volume. If you replace `command`, keep `--host=0.0.0.0` or the server won't be reachable from outside the container.
+
 ## How the build works
 
 - **Release** (daily): compares PyPI's latest Olah version with the tags in GHCR and builds if it's new.

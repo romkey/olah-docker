@@ -1,0 +1,27 @@
+# Example Docker Compose file for Olah.
+#   docker compose -f compose.example.yaml up -d
+services:
+  olah:
+    image: ghcr.io/romkey/olah-docker:latest   # or pin a version, e.g. :0.5.1
+    container_name: olah
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+    volumes:
+      - olah-data:/data   # cached repos and logs
+    # Olah takes its settings as command-line flags (or a --config file).
+    # Set --mirror-netloc to the host:port your clients use to reach Olah, and
+    # keep the --host/--repos-path/--log-path flags from the image's default.
+    command:
+      - olah-cli
+      - --host=0.0.0.0
+      - --port=8090
+      - --repos-path=/data/repos
+      - --log-path=/data/logs
+      - --mirror-scheme=http
+      - --mirror-netloc=localhost:8090
+      - --mirror-lfs-netloc=localhost:8090
+      # - --cache-size-limit=100GB
+
+volumes:
+  olah-data:
