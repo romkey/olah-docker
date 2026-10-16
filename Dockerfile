@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM python:3.13-slim-trixie AS builder
+FROM python:3.14-slim-trixie AS builder
 
 # Olah version to install from PyPI; empty installs the latest release.
 ARG OLAH_VERSION=""
@@ -40,7 +40,7 @@ with urllib.request.urlopen(url) as r, tarfile.open(fileobj=io.BytesIO(r.read())
     tar.extractall(dest, members=members, filter="data")
 PY
 
-FROM python:3.13-slim-trixie
+FROM python:3.14-slim-trixie
 
 ENV PYTHONUNBUFFERED=1 \
     PATH="/opt/olah/bin:$PATH"
